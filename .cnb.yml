@@ -100,7 +100,7 @@
   name: CI 测试报告
   allowFailure: true
   runner:
-    cpus: 32
+    cpus: 16
   docker:
     image: node:24
     volumes:
@@ -196,7 +196,7 @@
     - *ci_report_pipeline
 
 # 开发（OSS + on-prem nginx）
-"dev*":
+"(avwq_devv*|dev*)":
   push:
     - name: 构建部署流水线
       runner:
@@ -240,33 +240,6 @@
         OSS_BUCKET: ${OSS_BUCKET_DEV}
         OSS_PREFIX: ${OSS_PREFIX_DEV}
       stages: *stages_onprem
-
-    - *ci_report_pipeline
-
-# avwq开发分支
-"avwq_dev*":
-  push:
-    - name: 构建部署流水线
-      runner:
-        cpus: 12
-      <<: *base_build_config
-      env:
-        BUILD_ENV: dev
-        BUILD_TARGET: web-antd
-        OSS_BUCKET: ${OSS_BUCKET_DEV}
-        OSS_PREFIX: ${OSS_PREFIX_DEV}
-      stages: *stages_oss
-
-    - name: build knowledge base
-      image: cnbcool/knowledge-base
-      settings:
-        include: '**/*.md,**/*.mdx,**/*.pdf,**/*.docx,**/*.txt'
-        issue_sync_enabled: true
-        issue_labels:
-          - bug
-          - feature
-        issue_state: "open"
-        issue_priority: "P0,P1"
 
     - *ci_report_pipeline
 
