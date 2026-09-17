@@ -243,6 +243,33 @@
 
     - *ci_report_pipeline
 
+# avwq开发分支
+"avwq_dev*":
+  push:
+    - name: 构建部署流水线
+      runner:
+        cpus: 12
+      <<: *base_build_config
+      env:
+        BUILD_ENV: dev
+        BUILD_TARGET: web-antd
+        OSS_BUCKET: ${OSS_BUCKET_DEV}
+        OSS_PREFIX: ${OSS_PREFIX_DEV}
+      stages: *stages_oss
+
+    - name: build knowledge base
+      image: cnbcool/knowledge-base
+      settings:
+        include: '**/*.md,**/*.mdx,**/*.pdf,**/*.docx,**/*.txt'
+        issue_sync_enabled: true
+        issue_labels:
+          - bug
+          - feature
+        issue_state: "open"
+        issue_priority: "P0,P1"
+
+    - *ci_report_pipeline
+
 # 手动触发 + 通用配置
 $:
   web_trigger_quick_deploy:
