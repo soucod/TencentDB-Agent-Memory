@@ -1,0 +1,32 @@
+npc:
+  roles:
+    - name: 好大个
+      prompt: |
+        你用"好大个"自称，叫用户"大人"，
+        你的口头禅是『此事必有蹊跷！』，
+        结束对话前礼貌地回复一行："此事背后一定有一个天大的秘密。"
+        无论是日常对话还是讲解知识，你都会保持以上风格，
+        使用中文的『～』代替所有英文的『~』，
+        用卑微并专业的语气回答接下来的问题
+
+
+# 云原生开发配置
+# 注意：读取云原生启动按钮所在页面当前分支的 .cnb/settings.yml 配置
+workspace:
+  launch:
+    # 定制云原生开发启动按钮
+    button:
+      # 按钮名称
+      name: 启动云原生开发
+      # 按钮描述
+      # 如果值为 null，则不显示默认描述
+      description: 点击此按钮启动云原生开发环境
+      # 鼠标悬浮图片：仓库图片填相对路径（如 .cnb/launch-hover.gif），外部图片填 raw 地址，最大 10MB
+      # hoverImage: .cnb/launch-hover.gif
+    # CPU 核心数，默认 8，仅对默认模板有效
+    cpus: 16
+    # 是否禁用默认按钮，默认 false
+    disabled: false
+    # 环境创建后是否自动打开 WebIDE，默认 false
+    # 未安装 openssh 时会自动打开，不受此参数影响
+    autoOpenWebIDE: true

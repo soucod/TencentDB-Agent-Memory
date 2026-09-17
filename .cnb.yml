@@ -1,0 +1,386 @@
+# ==========================================
+# av-admin-vben - CNB 构建配置 v3.1 (重构版)
+# 功能：Vue 3 构建、NPM 发布、OSS 部署、Docker 镜像、On-Prem Nginx 部署
+# 说明：使用 YAML 锚点重用公共基础环境、部署/归档任务及 CI 测试报告流水线
+# ==========================================
+
+# ------------------------------------------
+# 基础复用锚点 (Anchors)
+# ------------------------------------------
+
+.npc: &npc
+  - services:
+      - docker
+    stages:
+      - name: run with npc
+        image: cnbcool/default-npc-agent:latest
+
+# 基础 Docker 与 Secrets 配置
+.base_build_config: &base_build_config
+  services:
+    - docker
+  docker:
+    image: node:24
+    volumes:
+      - /root/.npm:copy-on-write
+      - /root/.local/share/pnpm/store:copy-on-write
+  imports:
+    - https://cnb.cool/avwq/cnb.cool/avwq-dream-200-star-secrets/-/blob/main/202-av-cloud-star-362-secrets/202-av-cloud-star-362-av-admin-vben-secrets.yml
+
+# 归档任务：Docker 镜像与 NPM 包
+.archive_docker: &archive_docker
+  image: docker
+  script:
+    - LOWER_REPO_SLUG=$(echo "${CNB_REPO_SLUG}" | tr '[:upper:]' '[:lower:]')
+    - docker login -u cnb -p "${CNB_TOKEN}" docker.cnb.cool
+    - docker build -f .ide/Dockerfile --build-arg BUILD_TARGET=${BUILD_TARGET} -t ${CNB_DOCKER_REGISTRY}/${LOWER_REPO_SLUG}:${CNB_BRANCH} .
+    - docker push ${CNB_DOCKER_REGISTRY}/${LOWER_REPO_SLUG}:${CNB_BRANCH}
+
+.archive_npm: &archive_npm
+  script: bash .cnb/scripts/publish-npm.sh ${BUILD_ENV} ${CNB_BRANCH}
+
+.archive_jobs: &archive_jobs
+  archive_docker: *archive_docker
+  archive_npm: *archive_npm
+
+# 部署任务：OSS / On-Prem
+.deploy_jobs_oss: &deploy_jobs_oss
+  publish_npm:
+    script: bash .cnb/scripts/publish-npm.sh ${BUILD_ENV}
+  deploy_oss:
+    script: bash .cnb/scripts/deploy-oss.sh ${BUILD_ENV}
+
+.deploy_jobs_onprem: &deploy_jobs_onprem
+  publish_npm:
+    script: bash .cnb/scripts/publish-npm.sh ${BUILD_ENV}
+  deploy_oss:
+    script: bash .cnb/scripts/deploy-oss.sh ${BUILD_ENV}
+  deploy_onprem:
+    script: bash .cnb/scripts/deploy-onprem.sh ${BUILD_ENV}
+
+# 构建阶段流水线 Stage (OSS-only vs OSS+Onprem)
+.stages_oss: &stages_oss
+  - name: 挂载缓存
+    caches:
+      - ~/.local/share/pnpm/store
+  - name: prepare
+    script: bash .cnb/scripts/prepare.sh
+  - name: build
+    script: bash .cnb/scripts/build.sh ${BUILD_ENV}
+  - name: attach artifacts
+    image: cnbcool/attachments:latest
+    settings:
+      attachments:
+        - artifacts/*.tar.gz
+  - name: deploy
+    jobs: *deploy_jobs_oss
+  - name: archive
+    jobs: *archive_jobs
+
+.stages_onprem: &stages_onprem
+  - name: 挂载缓存
+    caches:
+      - ~/.local/share/pnpm/store
+  - name: prepare
+    script: bash .cnb/scripts/prepare.sh
+  - name: build
+    script: bash .cnb/scripts/build.sh ${BUILD_ENV}
+  - name: attach artifacts
+    image: cnbcool/attachments:latest
+    settings:
+      attachments:
+        - artifacts/*.tar.gz
+  - name: deploy
+    jobs: *deploy_jobs_onprem
+  - name: archive
+    jobs: *archive_jobs
+
+# CI 测试报告流水线
+.ci_report_pipeline: &ci_report_pipeline
+  name: CI 测试报告
+  allowFailure: true
+  runner:
+    cpus: 32
+  docker:
+    image: node:24
+    volumes:
+      - /root/.npm:copy-on-write
+      - /root/.local/share/pnpm/store:copy-on-write
+  imports:
+    - https://cnb.cool/avwq/cnb.cool/avwq-dream-200-star-secrets/-/blob/main/202-av-cloud-star-362-secrets/202-av-cloud-star-362-av-admin-vben-secrets.yml
+  env:
+    BUILD_TARGET: web-antd
+  stages:
+    - name: 挂载缓存
+      caches:
+        - ~/.local/share/pnpm/store
+    - name: 📊 前端测试与报告
+      script:
+        - bash .cnb/scripts/prepare.sh
+        - bash .cnb/scripts/ci_report.sh
+
+# ------------------------------------------
+# 流水线配置 (Pipelines)
+# ------------------------------------------
+
+好大个:
+  issue.comment@npc: *npc
+  pull_request.comment@npc: *npc
+
+"**":
+  push:
+    - stages:
+        - name: TCA
+          timeout: 2h
+          image: cnbcool/tca:latest
+          settings:
+            block: false
+
+# 生产
+"production*":
+  push:
+    - name: 构建部署流水线
+      runner:
+        cpus: 12
+      <<: *base_build_config
+      env:
+        BUILD_ENV: production
+        BUILD_TARGET: web-antd
+        OSS_BUCKET: ${OSS_BUCKET_PROD}
+        OSS_PREFIX: ${OSS_PREFIX_PROD}
+      stages: *stages_oss
+
+    - *ci_report_pipeline
+
+# 预发布
+"prepare*":
+  push:
+    - name: 构建部署流水线
+      runner:
+        cpus: 12
+      <<: *base_build_config
+      env:
+        BUILD_ENV: prepare
+        BUILD_TARGET: web-antd
+        OSS_BUCKET: ${OSS_BUCKET_PREPARE}
+        OSS_PREFIX: ${OSS_PREFIX_PREPARE}
+      stages: *stages_oss
+
+    - *ci_report_pipeline
+
+# 测试
+"test*":
+  push:
+    - name: 构建部署流水线
+      runner:
+        cpus: 12
+      <<: *base_build_config
+      env:
+        BUILD_ENV: test
+        BUILD_TARGET: web-antd
+        OSS_BUCKET: ${OSS_BUCKET_TEST}
+        OSS_PREFIX: ${OSS_PREFIX_TEST}
+      stages: *stages_oss
+
+    - name: build knowledge base
+      image: cnbcool/knowledge-base
+      settings:
+        include: '**/*.md,**/*.mdx,**/*.pdf,**/*.docx,**/*.txt'
+        issue_sync_enabled: true
+        issue_labels:
+          - bug
+          - feature
+        issue_state: "open"
+        issue_priority: "P0,P1"
+
+    - *ci_report_pipeline
+
+# 开发（OSS + on-prem nginx）
+"dev*":
+  push:
+    - name: 构建部署流水线
+      runner:
+        cpus: 16
+      <<: *base_build_config
+      env:
+        BUILD_ENV: dev
+        BUILD_TARGET: web-antd
+        OSS_BUCKET: ${OSS_BUCKET_DEV}
+        OSS_PREFIX: ${OSS_PREFIX_DEV}
+      stages: *stages_onprem
+
+    - *ci_report_pipeline
+
+# 本地（OSS + on-prem nginx）
+"local*":
+  push:
+    - name: 构建部署流水线
+      runner:
+        cpus: 12
+      <<: *base_build_config
+      env:
+        BUILD_ENV: local
+        BUILD_TARGET: web-antd
+        OSS_BUCKET: ${OSS_BUCKET_LOCAL}
+        OSS_PREFIX: ${OSS_PREFIX_LOCAL}
+      stages: *stages_onprem
+
+    - *ci_report_pipeline
+
+# 迭代分支：默认只做"构建 + 附件 + 制品库"，不自动部署
+"iter*":
+  push:
+    - name: 构建部署流水线
+      runner:
+        cpus: 16
+      <<: *base_build_config
+      env:
+        BUILD_ENV: dev
+        BUILD_TARGET: web-antd
+        OSS_BUCKET: ${OSS_BUCKET_DEV}
+        OSS_PREFIX: ${OSS_PREFIX_DEV}
+      stages: *stages_onprem
+
+    - *ci_report_pipeline
+
+# 手动触发 + 通用配置
+$:
+  web_trigger_quick_deploy:
+    - name: 手动部署 ${CNB_BRANCH} → ${TARGET_ENV:-dev}/${DEPLOY_TARGET:-onprem} @${COMMIT_SHA:-HEAD}
+      runner:
+        cpus: 16
+      <<: *base_build_config
+      env:
+        BUILD_ENV: ${TARGET_ENV:-dev}
+        BUILD_TARGET: web-antd
+      stages:
+        - name: 📋 显示部署信息
+          script: |
+            echo "╔════════════════════════════════════════════╗"
+            echo "║         🚀 快速部署流水线                    ║"
+            echo "╠════════════════════════════════════════════╣"
+            echo "║ 分支:        ${CNB_BRANCH}"
+            echo "║ 部署环境:    ${TARGET_ENV:-dev}"
+            echo "║ 部署服务器:  ${DEPLOY_TARGET:-onprem}"
+            echo "║ 指定提交:    ${COMMIT_SHA:-最新提交}"
+            echo "║ 跳过 NPM:    ${SKIP_NPM:-true}"
+            echo "║ 跳过 Docker: ${SKIP_DOCKER:-true}"
+            echo "║ 构建目标:    ${BUILD_TARGET:-web-antd}"
+            echo "╚════════════════════════════════════════════╝"
+
+        - name: 🔀 检出指定提交
+          if: |
+            [ -n "${COMMIT_SHA}" ]
+          script: |
+            echo "📌 检出到指定提交: ${COMMIT_SHA}"
+            git fetch --depth=50 origin ${CNB_BRANCH}
+            git checkout ${COMMIT_SHA}
+            echo "✅ 当前提交: $(git rev-parse --short HEAD)"
+            echo "📝 提交信息: $(git log -1 --pretty=format:'%s')"
+
+        - name: 挂载缓存
+          caches:
+            - ~/.local/share/pnpm/store
+        - name: 📦 安装依赖
+          script: bash .cnb/scripts/prepare.sh
+
+        - name: 🔨 构建项目
+          script: bash .cnb/scripts/build.sh ${TARGET_ENV:-dev}
+
+        - name: 📎 附加产物
+          image: cnbcool/attachments:latest
+          settings:
+            attachments:
+              - artifacts/*.tar.gz
+
+        - name: ☁️ 部署到阿里云 OSS
+          if: |
+            [ "${DEPLOY_TARGET}" = "oss" ] || [ "${DEPLOY_TARGET}" = "both" ]
+          script: |
+            echo "☁️ 部署到阿里云 OSS..."
+            bash .cnb/scripts/deploy-oss.sh ${TARGET_ENV:-dev}
+
+        - name: 🖥️ 部署到本地化服务器
+          if: |
+            [ "${DEPLOY_TARGET}" = "onprem" ] || [ "${DEPLOY_TARGET}" = "both" ] || [ -z "${DEPLOY_TARGET}" ]
+          script: |
+            echo "🖥️ 部署到本地化服务器 (nginx)..."
+            bash .cnb/scripts/deploy-onprem.sh ${TARGET_ENV:-dev}
+
+        - name: 📤 发布 NPM
+          if: |
+            [ "${SKIP_NPM}" != "true" ]
+          script: bash .cnb/scripts/publish-npm.sh ${TARGET_ENV:-dev}
+
+        - name: 🐳 构建 Docker 镜像
+          if: |
+            [ "${SKIP_DOCKER}" != "true" ]
+          image: docker
+          script:
+            - LOWER_REPO_SLUG=$(echo "${CNB_REPO_SLUG}" | tr '[:upper:]' '[:lower:]')
+            - docker login -u cnb -p "${CNB_TOKEN}" docker.cnb.cool
+            - docker build -f .ide/Dockerfile --build-arg BUILD_TARGET=${BUILD_TARGET} -t ${CNB_DOCKER_REGISTRY}/${LOWER_REPO_SLUG}:${CNB_BRANCH}-quick .
+            - docker push ${CNB_DOCKER_REGISTRY}/${LOWER_REPO_SLUG}:${CNB_BRANCH}-quick
+
+        - name: ✅ 部署完成
+          script: |
+            echo "╔════════════════════════════════════════════╗"
+            echo "║         ✅ 快速部署完成！                   ║"
+            echo "╠════════════════════════════════════════════╣"
+            echo "║ 分支:     ${CNB_BRANCH}"
+            echo "║ 环境:     ${TARGET_ENV:-dev}"
+            echo "║ 服务器:   ${DEPLOY_TARGET:-onprem}"
+            echo "║ 提交:     $(git rev-parse --short HEAD)"
+            echo "║ 时间:     $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "╚════════════════════════════════════════════╝"
+
+  vscode:
+    - runner:
+        cpus: 32
+      docker:
+        build: .ide/Dockerfile
+      env:
+        # 声明首次打开终端时自动执行的命令，支持多行文本
+        CNB_WELCOME_CMD: |
+          echo "Hello World!"
+          echo done
+      services:
+        - vscode
+        - docker
+      # 开发环境启动后会执行的任务
+      stages:
+        - name: ls
+          script: ls -al
+  push:
+    - runner:
+        cpus: 16
+    - <<: *base_build_config
+      env:
+        BUILD_ENV: dev
+        BUILD_TARGET: web-antd
+      stages:
+        - name: 挂载缓存
+          caches:
+            - ~/.local/share/pnpm/store
+        - name: prepare
+          script: bash .cnb/scripts/prepare.sh
+        - name: build
+          script: bash .cnb/scripts/build.sh ${BUILD_ENV}
+        - name: publish npm
+          script: bash .cnb/scripts/publish-npm.sh ${BUILD_ENV}
+        - name: attach artifacts
+          image: cnbcool/attachments:latest
+          settings:
+            attachments: [ "artifacts/*.tar.gz" ]
+        - name: archive docker
+          <<: *archive_docker
+        - name: archive npm
+          <<: *archive_npm
+  # 生成 Code Wiki
+  tag_push:
+    - stages:
+        - name: 生成 Code Wiki
+          timeout: 4h
+          image: cnbcool/codewiki:latest
+          settings:
+            git_doc_dir: /${CNB_BUILD_WORKSPACE}/${CNB_REPO_SLUG}/codewiki

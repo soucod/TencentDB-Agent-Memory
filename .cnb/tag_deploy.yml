@@ -1,0 +1,124 @@
+# CNB 部署环境配置
+# 定义各个部署环境和对应的构建参数
+# 文档: https://docs.cnb.cool/zh/build/deploy.html
+#
+# 注意：分支页面的快速部署按钮配置在 .cnb/scripts/web_trigger.yml 中
+# 本文件配置的是 Tag 部署页面的环境
+
+environments:
+  # ============================================================
+  # 标准部署环境配置（基于 Tag 的部署）
+  # ============================================================
+  # 开发环境
+  - name: development
+    description: 开发环境部署
+    env:
+      BUILD_ENV: dev
+      BUILD_MODE: dev
+      NODE_ENV: development
+      VITE_DROP_CONSOLE: false
+      VITE_DROP_DEBUGGER: false
+      VITE_SOURCEMAP: true
+    deploy:
+      - name: 部署开发环境
+        description: 部署到开发服务器
+        env:
+          SERVER: dev-server
+          DEPLOY_PATH: /var/www/dev
+
+  # 测试环境
+  - name: test
+    description: 测试环境部署
+    env:
+      BUILD_ENV: test
+      BUILD_MODE: test
+      NODE_ENV: development
+      VITE_DROP_CONSOLE: false
+      VITE_DROP_DEBUGGER: false
+      VITE_SOURCEMAP: true
+    require:
+      - development  # 需要开发环境部署成功
+    deploy:
+      - name: 部署测试环境
+        description: 部署到测试服务器
+        env:
+          SERVER: test-server
+          DEPLOY_PATH: /var/www/test
+
+  # 预发布环境
+  - name: prepare
+    description: 预发布环境部署
+    env:
+      BUILD_ENV: prepare
+      BUILD_MODE: prepare
+      NODE_ENV: production
+      VITE_DROP_CONSOLE: true
+      VITE_DROP_DEBUGGER: true
+      VITE_SOURCEMAP: false
+    require:
+      - environmentName: test
+        after: 600  # 测试环境部署成功10分钟后
+    deploy:
+      - name: 部署预发布环境
+        description: 部署到预发布服务器
+        env:
+          SERVER: staging-server
+          DEPLOY_PATH: /var/www/staging
+
+  # 生产环境
+  - name: production
+    description: 生产环境部署
+    env:
+      BUILD_ENV: production
+      BUILD_MODE: production
+      NODE_ENV: production
+      VITE_DROP_CONSOLE: true
+      VITE_DROP_DEBUGGER: true
+      VITE_SOURCEMAP: false
+      VITE_ENABLE_OBFUSCATION: true
+      VITE_ENABLE_SECURITY: true
+    require:
+      - environmentName: staging
+        after: 1800  # 预发布环境部署成功30分钟后
+      - annotation: security_check
+        expect:
+          eq: passed
+    button:
+      - name: 安全检查
+        description: 执行安全检查流程
+        event: web_trigger_security_check
+        env:
+          CHECK_TYPE: full
+    deploy:
+      - name: 部署生产环境
+        description: 部署到生产服务器（需要审批）
+        env:
+          SERVER: production-server
+          DEPLOY_PATH: /var/www/production
+      - name: 灰度部署
+        description: 灰度部署到部分服务器
+        env:
+          SERVER: production-server
+          DEPLOY_PATH: /var/www/production
+          GRAYSCALE: true
+          GRAYSCALE_RATIO: 10
+
+  # 私有部署环境（生产环境-本地）
+  - name: production-onpremises
+    description: 私有部署生产环境
+    env:
+      BUILD_ENV: production-onpremises
+      BUILD_MODE: production-onpremises
+      NODE_ENV: production
+      VITE_DROP_CONSOLE: true
+      VITE_DROP_DEBUGGER: true
+      VITE_SOURCEMAP: false
+    require:
+      - environmentName: staging
+        after: 1800
+    deploy:
+      - name: 部署私有环境
+        description: 部署到私有服务器
+        env:
+          SERVER: onpremises-server
+          DEPLOY_PATH: /var/www/production-onpremises
